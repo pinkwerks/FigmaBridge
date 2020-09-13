@@ -8,7 +8,7 @@
 //    var projectsResponse = ProjectsResponse.FromJson(jsonString);
 //    var projectFilesResponse = ProjectFilesResponse.FromJson(jsonString);
 
-namespace QuickType
+namespace Figma
 {
     using System;
     using System.Collections.Generic;
@@ -54,6 +54,19 @@ namespace QuickType
 
         [JsonProperty("schemaVersion")]
         public float SchemaVersion { get; set; }
+    }
+
+
+    public partial class ImageResponse
+    {
+        [JsonProperty("err")]
+        public String Err { get; set; }
+
+        [JsonProperty("images")]
+        public Dictionary<string, string> Images { get; set; }
+
+        [JsonProperty("status")]
+        public int Status { get; set; }
     }
 
     /// <summary>
@@ -1232,36 +1245,41 @@ namespace QuickType
 
     public partial class FileResponse
     {
-        public static FileResponse FromJson(string json) => JsonConvert.DeserializeObject<FileResponse>(json, QuickType.Converter.Settings);
+        public static FileResponse FromJson(string json) => JsonConvert.DeserializeObject<FileResponse>(json, Figma.Converter.Settings);
+    }
+
+    public partial class ImageResponse
+    {
+        public static ImageResponse FromJson(string json) => JsonConvert.DeserializeObject<ImageResponse>(json, Figma.Converter.Settings);
     }
 
     public partial class CommentsResponse
     {
-        public static CommentsResponse FromJson(string json) => JsonConvert.DeserializeObject<CommentsResponse>(json, QuickType.Converter.Settings);
+        public static CommentsResponse FromJson(string json) => JsonConvert.DeserializeObject<CommentsResponse>(json, Figma.Converter.Settings);
     }
 
     public partial class CommentRequest
     {
-        public static CommentRequest FromJson(string json) => JsonConvert.DeserializeObject<CommentRequest>(json, QuickType.Converter.Settings);
+        public static CommentRequest FromJson(string json) => JsonConvert.DeserializeObject<CommentRequest>(json, Figma.Converter.Settings);
     }
 
     public partial class ProjectsResponse
     {
-        public static ProjectsResponse FromJson(string json) => JsonConvert.DeserializeObject<ProjectsResponse>(json, QuickType.Converter.Settings);
+        public static ProjectsResponse FromJson(string json) => JsonConvert.DeserializeObject<ProjectsResponse>(json, Figma.Converter.Settings);
     }
 
     public partial class ProjectFilesResponse
     {
-        public static ProjectFilesResponse FromJson(string json) => JsonConvert.DeserializeObject<ProjectFilesResponse>(json, QuickType.Converter.Settings);
+        public static ProjectFilesResponse FromJson(string json) => JsonConvert.DeserializeObject<ProjectFilesResponse>(json, Figma.Converter.Settings);
     }
 
     public static class Serialize
     {
-        public static string ToJson(this FileResponse self) => JsonConvert.SerializeObject(self, QuickType.Converter.Settings);
-        public static string ToJson(this CommentsResponse self) => JsonConvert.SerializeObject(self, QuickType.Converter.Settings);
-        public static string ToJson(this CommentRequest self) => JsonConvert.SerializeObject(self, QuickType.Converter.Settings);
-        public static string ToJson(this ProjectsResponse self) => JsonConvert.SerializeObject(self, QuickType.Converter.Settings);
-        public static string ToJson(this ProjectFilesResponse self) => JsonConvert.SerializeObject(self, QuickType.Converter.Settings);
+        public static string ToJson(this FileResponse self) => JsonConvert.SerializeObject(self, Figma.Converter.Settings);
+        public static string ToJson(this CommentsResponse self) => JsonConvert.SerializeObject(self, Figma.Converter.Settings);
+        public static string ToJson(this CommentRequest self) => JsonConvert.SerializeObject(self, Figma.Converter.Settings);
+        public static string ToJson(this ProjectsResponse self) => JsonConvert.SerializeObject(self, Figma.Converter.Settings);
+        public static string ToJson(this ProjectFilesResponse self) => JsonConvert.SerializeObject(self, Figma.Converter.Settings);
     }
 
     internal static class Converter

@@ -1,25 +1,62 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Networking;
+using UnityEngine.UI;
 
 public class FigmaManager : MonoBehaviour
 {
     public string FigmaToken = "61012-08857851-40fd-48ca-9e4d-1e9c776d1a21";
-    public string figmaRestURL = "https://api.figma.com/v1/files";
     public string figmaFileKey = "ks4xgTujRkiGdr2a1Lz9JP";
     public string figmaNodeId = "";
+    public string FigmaRendersFolder = "FigmaRenders";
+    public float ImageScale = 1;
 
-    private HttpClient client = null;
+    string figmaBaseURL = "https://api.figma.com/v1";
+    HttpClient client = null;
+    bool throttled = false;
+    Dictionary<string, Image> imagesById = new Dictionary<string, Image>();
+    Dictionary<string, string> urlsById = new Dictionary<string, string>();
 
-    async Task<string> GetFigmaRespose()
+    async Task<string> GetImageJson(string id)
+    {
+        if (throttled)
+        {
+            Debug.LogWarning("Currently throttled - wait awhile...");
+            return null;
+        }
+
+        // Call asynchronous network methods in a try/catch block to handle exceptions.
+        try
+        {
+            var url = $"{figmaBaseURL}/images/{figmaFileKey}?ids={id}&scale={ImageScale}";
+            string responseBody = await client.GetStringAsync(url);
+            responseBody = Uri.UnescapeDataString(responseBody);
+            return responseBody;
+        }
+        catch (HttpRequestException e)
+        {
+            if (e.Message.StartsWith("429"))
+            {
+                throttled = true;
+            }
+            Debug.Log($"Exception Message :{e.Message} ");
+        }
+
+        return null;
+    }
+
+    async Task<string> GetFile()
     {
         // Call asynchronous network methods in a try/catch block to handle exceptions.
         try
         {
-            string responseBody = await client.GetStringAsync($"{figmaRestURL}/{figmaFileKey}");
+            string responseBody = await client.GetStringAsync($"{figmaBaseURL}/files/{figmaFileKey}");
 
             responseBody = Uri.UnescapeDataString(responseBody);
 
@@ -35,10 +72,12 @@ public class FigmaManager : MonoBehaviour
         return null;
     }
 
-    void BuildDocument(QuickType.DocumentClass document)
+    void BuildDocument(Figma.DocumentClass document)
     {
         var go = new GameObject();
         go.name = document.Name;
+
+        // make the game object hierarchy
 
         foreach (var item in document.Children)
         {
@@ -46,58 +85,59 @@ public class FigmaManager : MonoBehaviour
         }
     }
 
-    void Build(QuickType.Document document, Transform parent)
+    void Build(Figma.Document document, Transform parent)
     {
         GameObject go = null;
 
         switch (document.Type)
         {
-            case QuickType.NodeType.Boolean:
+            case Figma.NodeType.Boolean:
                 break;
-            case QuickType.NodeType.Canvas:
+            case Figma.NodeType.Canvas:
                 go = BuildCanvas(document);
                 break;
-            case QuickType.NodeType.Component:
+            case Figma.NodeType.Component:
                 break;
-            case QuickType.NodeType.Document:
+            case Figma.NodeType.Document:
                 break;
-            case QuickType.NodeType.Ellipse:
+            case Figma.NodeType.Ellipse:
                 break;
-            case QuickType.NodeType.Frame:
+            case Figma.NodeType.Frame:
                 go = BuildFrame(document);
                 break;
-            case QuickType.NodeType.Group:
+            case Figma.NodeType.Group:
                 go = BuildGroup(document);
                 break;
-            case QuickType.NodeType.Instance:
+            case Figma.NodeType.Instance:
                 break;
-            case QuickType.NodeType.Line:
+            case Figma.NodeType.Line:
                 break;
-            case QuickType.NodeType.Rectangle:
+            case Figma.NodeType.Rectangle:
                 go = BuildRectange(document);
                 break;
-            case QuickType.NodeType.RegularPolygon:
+            case Figma.NodeType.RegularPolygon:
                 go = BuildRegularPolygon(document);
                 break;
-            case QuickType.NodeType.Slice:
+            case Figma.NodeType.Slice:
                 break;
-            case QuickType.NodeType.Star:
+            case Figma.NodeType.Star:
                 break;
-            case QuickType.NodeType.Text:
+            case Figma.NodeType.Text:
                 go = BuildText(document);
                 break;
-            case QuickType.NodeType.Vector:
+            case Figma.NodeType.Vector:
+                go = BuildVector(document);
                 break;
             default:
                 break;
         }
 
-        if (!go)
+        if (!go && document.Type != Figma.NodeType.Vector)
         {
-            go = new GameObject(document.Name);
+            go = new GameObject();
         }
 
-        go.transform.SetParent(parent);
+        go.transform.SetParent(parent, true);
 
         if (document.Children != null)
         {
@@ -112,24 +152,60 @@ public class FigmaManager : MonoBehaviour
         {
             go.SetActive(true);
         }
+
         go.SetActive(document.Visible);
     }
 
-    private GameObject BuildRegularPolygon(QuickType.Document document)
+    private GameObject BuildVector(Figma.Document document)
     {
         var go = BuildBase(document);
-        BuildFills(document, go);
-        //go.AddComponent<MeshRenderer>();
+        SetupRect(document, go);
+        var image = BuildFills(document, go);
+        imagesById.Add(document.Id, image);
         return go;
     }
 
-    private GameObject BuildBase(QuickType.Document document)
+    private string SaveAndConfigureImporter(string id, Texture2D texture2d)
+    {
+        // save to assets
+
+        var bytes = texture2d.EncodeToPNG();
+        var rendersPath = $"{Application.dataPath}/{FigmaRendersFolder}";
+        Directory.CreateDirectory(rendersPath);
+        var filename = id.Replace(":", "_");
+        filename = $"{filename}.png";
+        File.WriteAllBytes($"{rendersPath}/{filename}", bytes);
+
+        AssetDatabase.Refresh();
+
+        // update importer settings
+
+        var assetFilePathname = $"Assets/{FigmaRendersFolder}/{filename}";
+        var importer = TextureImporter.GetAtPath(assetFilePathname) as TextureImporter;
+        if (importer == null)
+        {
+            return null;
+        }
+        importer.textureType = TextureImporterType.Sprite;
+        importer.mipmapEnabled = true;
+        AssetDatabase.ImportAsset(importer.assetPath, ImportAssetOptions.ForceUpdate);
+        return assetFilePathname;
+    }
+
+    private GameObject BuildRegularPolygon(Figma.Document document)
+    {
+        var go = BuildBase(document);
+        BuildFills(document, go);
+        return go;
+    }
+
+    private GameObject BuildBase(Figma.Document document)
     {
         var go = new GameObject(document.Name);
         return go;
     }
 
-    private void SetupRect(QuickType.Document document, GameObject go)
+    private void SetupRect(Figma.Document document, GameObject go)
     {
         var absoluteBoundingBox = document.AbsoluteBoundingBox;
 
@@ -141,28 +217,25 @@ public class FigmaManager : MonoBehaviour
         var anchorMin = Vector2.zero;
         var anchorMax = Vector2.one;
 
-        float width = absoluteBoundingBox.X;
-        float height = absoluteBoundingBox.Y;
-
         if (document.Constraints != null)
         {
             switch (document.Constraints.Horizontal)
             {
-                case QuickType.Horizontal.Center:
+                case Figma.Horizontal.Center:
                     anchorMin.x = .5f;
                     anchorMax.x = .5f;
                     break;
-                case QuickType.Horizontal.Left:
+                case Figma.Horizontal.Left:
                     anchorMin.x = 0;
                     anchorMax.x = 0;
                     break;
-                case QuickType.Horizontal.LeftRight:
+                case Figma.Horizontal.LeftRight:
                     break;
-                case QuickType.Horizontal.Right:
+                case Figma.Horizontal.Right:
                     anchorMin.x = 1;
                     anchorMax.x = 1;
                     break;
-                case QuickType.Horizontal.Scale:
+                case Figma.Horizontal.Scale:
                     anchorMin.x = 0;
                     anchorMax.x = 1;
                     break;
@@ -172,23 +245,23 @@ public class FigmaManager : MonoBehaviour
 
             switch (document.Constraints.Vertical)
             {
-                case QuickType.Vertical.Bottom:
+                case Figma.Vertical.Bottom:
                     anchorMin.y = 0;
                     anchorMax.y = 0;
                     break;
-                case QuickType.Vertical.Center:
+                case Figma.Vertical.Center:
                     anchorMin.y = .5f;
                     anchorMax.y = .5f;
                     break;
-                case QuickType.Vertical.Scale:
+                case Figma.Vertical.Scale:
                     anchorMin.y = 0;
                     anchorMax.y = 1;
                     break;
-                case QuickType.Vertical.Top:
+                case Figma.Vertical.Top:
                     anchorMin.y = 1;
                     anchorMax.y = 1;
                     break;
-                case QuickType.Vertical.TopBottom:
+                case Figma.Vertical.TopBottom:
                     break;
                 default:
                     break;
@@ -196,27 +269,17 @@ public class FigmaManager : MonoBehaviour
         }
 
         var rectTransform = go.AddComponent<RectTransform>();
-
-        //rectTransform.pivot = new Vector2(0, 1);
         rectTransform.anchorMin = new Vector2(0, 1);
         rectTransform.anchorMax = new Vector2(0, 1);
-        //rectTransform.anchoredPosition = new Vector2(absoluteBoundingBox.X, -absoluteBoundingBox.Y);
-        //rectTransform.sizeDelta = new Vector2(absoluteBoundingBox.Width, absoluteBoundingBox.Height);
-
-        //rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, absoluteBoundingBox.Width);
-        //rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, absoluteBoundingBox.Height);
-
         rectTransform.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Left, absoluteBoundingBox.X, absoluteBoundingBox.Width);
         rectTransform.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Top, absoluteBoundingBox.Y, absoluteBoundingBox.Height);
-
-        //rectTransform.position = new Vector3(absoluteBoundingBox.X, absoluteBoundingBox.Y, 0);
     }
 
-    private void BuildFills(QuickType.Document document, GameObject go)
+    private Image BuildFills(Figma.Document document, GameObject go)
     {
         if (document.Fills == null)
         {
-            return;
+            return null;
         }
 
         if (document.Fills.Length > 0)
@@ -226,31 +289,29 @@ public class FigmaManager : MonoBehaviour
                 Debug.LogWarning($"More than one fill detected on {go.name}, using first.");
             }
 
-            var image = go.AddComponent<UnityEngine.UI.Image>();
-
-            if (document.Name == "**** INVITE PEOPLE LIST ****")
-            {
-                Debug.Log("");
-            }
+            var image = go.AddComponent<Image>();
 
             var firstFill = document.Fills[0];
             var color = firstFill.Color;
 
-            if (color == null)
-            {
-                // Fill type may be 'image'
-                image.color = Color.cyan;
-            }
-            else
+            if (color != null)
             {
                 image.color = new Color(color.R, color.G, color.B, color.A);
             }
 
-            image.enabled = firstFill.Visible;
-        }
-    }
+            if (firstFill.Type != Figma.FillType.Solid)
+            {
+                imagesById.Add(document.Id, image);
+            }
 
-    private GameObject BuildText(QuickType.Document document)
+            image.enabled = firstFill.Visible;
+
+            return image;
+        }
+
+        return null;
+    }
+    private GameObject BuildText(Figma.Document document)
     {
         var go = BuildBase(document);
 
@@ -278,40 +339,42 @@ public class FigmaManager : MonoBehaviour
         return go;
     }
 
-    private TextAlignmentOptions TextAlignment(QuickType.Document document)
+    private TextAlignmentOptions TextAlignment(Figma.Document document)
     {
         TextAlignmentOptions tao = TextAlignmentOptions.TopLeft;
 
         switch (document.Style.TextAlignHorizontal)
         {
-            case QuickType.TextAlignHorizontal.Center:
+            case Figma.TextAlignHorizontal.Center:
                 switch (document.Style.TextAlignVertical)
                 {
-                    case QuickType.TextAlignVertical.Bottom:
+                    case Figma.TextAlignVertical.Bottom:
                         tao = TextAlignmentOptions.Bottom;
                         break;
-                    case QuickType.TextAlignVertical.Center:
+                    case Figma.TextAlignVertical.Center:
                         tao = TextAlignmentOptions.Center;
                         break;
-                    case QuickType.TextAlignVertical.Top:
+                    case Figma.TextAlignVertical.Top:
                         tao = TextAlignmentOptions.Top;
                         break;
                     default:
                         break;
                 }
                 break;
-            case QuickType.TextAlignHorizontal.Justified:
+
+            case Figma.TextAlignHorizontal.Justified:
                 break;
-            case QuickType.TextAlignHorizontal.Left:
+
+            case Figma.TextAlignHorizontal.Left:
                 switch (document.Style.TextAlignVertical)
                 {
-                    case QuickType.TextAlignVertical.Bottom:
+                    case Figma.TextAlignVertical.Bottom:
                         tao = TextAlignmentOptions.BottomLeft;
                         break;
-                    case QuickType.TextAlignVertical.Center:
+                    case Figma.TextAlignVertical.Center:
                         tao = TextAlignmentOptions.Left;
                         break;
-                    case QuickType.TextAlignVertical.Top:
+                    case Figma.TextAlignVertical.Top:
                         tao = TextAlignmentOptions.TopLeft;
                         break;
                     default:
@@ -319,22 +382,24 @@ public class FigmaManager : MonoBehaviour
                 }
                 tao = TextAlignmentOptions.Left;
                 break;
-            case QuickType.TextAlignHorizontal.Right:
+
+            case Figma.TextAlignHorizontal.Right:
                 switch (document.Style.TextAlignVertical)
                 {
-                    case QuickType.TextAlignVertical.Bottom:
+                    case Figma.TextAlignVertical.Bottom:
                         tao = TextAlignmentOptions.BottomRight;
                         break;
-                    case QuickType.TextAlignVertical.Center:
+                    case Figma.TextAlignVertical.Center:
                         tao = TextAlignmentOptions.Right;
                         break;
-                    case QuickType.TextAlignVertical.Top:
+                    case Figma.TextAlignVertical.Top:
                         tao = TextAlignmentOptions.TopRight;
                         break;
                     default:
                         break;
                 }
                 break;
+
             default:
                 break;
         }
@@ -342,18 +407,15 @@ public class FigmaManager : MonoBehaviour
         return tao;
     }
 
-    private GameObject BuildCanvas(QuickType.Document document)
+    private GameObject BuildCanvas(Figma.Document document)
     {
         var go = BuildBase(document);
         go.AddComponent<Canvas>();
-        //var rt = go.GetComponent<RectTransform>();
-        //rt.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Left, 0, 1920);
-        //rt.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Top, 0, 1080);
         BuildBackground(document, go);
         return go;
     }
 
-    private void BuildBackground(QuickType.Document document, GameObject go)
+    private void BuildBackground(Figma.Document document, GameObject go)
     {
         var image = go.AddComponent<UnityEngine.UI.Image>();
 
@@ -366,7 +428,7 @@ public class FigmaManager : MonoBehaviour
         image.enabled = false;
     }
 
-    private GameObject BuildFrame(QuickType.Document document)
+    private GameObject BuildFrame(Figma.Document document)
     {
         var go = BuildBase(document);
         SetupRect(document, go);
@@ -374,7 +436,7 @@ public class FigmaManager : MonoBehaviour
         return go;
     }
 
-    private GameObject BuildGroup(QuickType.Document document)
+    private GameObject BuildGroup(Figma.Document document)
     {
         var go = BuildBase(document);
         SetupRect(document, go);
@@ -382,7 +444,7 @@ public class FigmaManager : MonoBehaviour
         return go;
     }
 
-    private GameObject BuildRectange(QuickType.Document document)
+    private GameObject BuildRectange(Figma.Document document)
     {
         var go = BuildBase(document);
         SetupRect(document, go);
@@ -393,17 +455,95 @@ public class FigmaManager : MonoBehaviour
     [ContextMenu("Get Figma")]
     public async void GetFigma()
     {
-        var first = EditorApplication.isPlayingOrWillChangePlaymode;
-        client = new HttpClient();
-        client.DefaultRequestHeaders.Add("X-Figma-Token", FigmaToken);
-        var jsonRespose = await GetFigmaRespose();
-        var fileResponse = QuickType.FileResponse.FromJson(jsonRespose);
+        throttled = false;
+        imagesById.Clear();
+        urlsById.Clear();
+
+        if (client == null)
+        {
+            client = new HttpClient();
+            client.DefaultRequestHeaders.Add("X-Figma-Token", FigmaToken);
+        }
+
+        var fileJson = await GetFile();
+        var fileResponse = Figma.FileResponse.FromJson(fileJson);
 
         BuildDocument(fileResponse.Document);
+
+        // make a request to render images and get the urls
+
+        string[] ids = new string[imagesById.Count];
+        imagesById.Keys.CopyTo(ids, 0);
+
+        var jointIds = String.Join(",", ids);
+        var imageJson = await GetImageJson(jointIds);
+        var imageResponse = Figma.ImageResponse.FromJson(imageJson);
+
+        // clean out nulls from our image response
+
+        foreach (var item in imageResponse.Images)
+        {
+            if (item.Value != null)
+            {
+                urlsById.Add(item.Key, item.Value);
+            }
+        }
+
+        // get a Texture2D for each of the image urls
+        // make a sprite out of it
+        // assign it back to the image components
+
+        foreach (var item in urlsById)
+        {
+            var texture2d = await GetRemoteTexture(item.Value);
+            var assetPath = SaveAndConfigureImporter(item.Key, texture2d);
+            var sprite = AssetDatabase.LoadAssetAtPath(assetPath, typeof(Sprite)) as Sprite;
+            imagesById[item.Key].sprite = sprite;
+        }
+    }
+
+    [ContextMenu("test")]
+    private void Test()
+    {
+        Debug.Log($"{Application.dataPath}");
     }
 
     private void OnEnable()
     {
         GetFigma();
+    }
+
+    public static async Task<Texture2D> GetRemoteTexture(string url)
+    {
+        using (UnityWebRequest www = UnityWebRequestTexture.GetTexture(url))
+        {
+            var asyncOp = www.SendWebRequest();
+
+            while (asyncOp.isDone == false)
+            {
+                await Task.Delay(1000 / 30);//30 hertz
+            }
+
+            if (www.isNetworkError || www.isHttpError)
+            {
+                Debug.Log($"{ www.error }, URL:{ www.url }");
+                return null;
+            }
+            else
+            {
+                return DownloadHandlerTexture.GetContent(www);
+            }
+        }
+    }
+
+    private static string GetGameObjectPath(Transform transform)
+    {
+        string path = transform.name;
+        while (transform.parent != null)
+        {
+            transform = transform.parent;
+            path = transform.name + "/" + path;
+        }
+        return path;
     }
 }
